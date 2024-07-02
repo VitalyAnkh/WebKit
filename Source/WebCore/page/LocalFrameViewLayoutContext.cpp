@@ -203,7 +203,7 @@ void LocalFrameViewLayoutContext::performLayout()
     {
         SetForScope layoutPhase(m_layoutPhase, LayoutPhase::InPreLayout);
 
-        if (!document()->isResolvingContainerQueriesForSelfOrAncestor()) {
+        if (!document()->isInStyleInterleavedLayoutForSelfOrAncestor()) {
             // If this is a new top-level layout and there are any remaining tasks from the previous layout, finish them now.
             if (!isLayoutNested() && m_postLayoutTaskTimer.isActive())
                 runPostLayoutTasks();
@@ -226,6 +226,8 @@ void LocalFrameViewLayoutContext::performLayout()
         protectedView()->willDoLayout(layoutRoot);
         m_firstLayout = false;
     }
+
+    auto isSimplifiedLayout = layoutRoot->needsSimplifiedNormalFlowLayoutOnly();
     {
         TraceScope tracingScope(RenderTreeLayoutStart, RenderTreeLayoutEnd);
         SetForScope layoutPhase(m_layoutPhase, LayoutPhase::InRenderTreeLayout);
@@ -235,6 +237,7 @@ void LocalFrameViewLayoutContext::performLayout()
 #ifndef NDEBUG
         RenderTreeNeedsLayoutChecker checker(*renderView());
 #endif
+        ++m_layoutIdentifier;
         layoutRoot->layout();
         ++m_layoutCount;
 #if ENABLE(TEXT_AUTOSIZING)
@@ -268,7 +271,7 @@ void LocalFrameViewLayoutContext::performLayout()
         if (m_needsFullRepaint)
             renderView()->repaintRootContents();
         ASSERT(!layoutRoot->needsLayout());
-        protectedView()->didLayout(layoutRoot);
+        protectedView()->didLayout(layoutRoot, isSimplifiedLayout);
         runOrScheduleAsynchronousTasks();
     }
     InspectorInstrumentation::didLayout(frame, *layoutRoot);
@@ -280,8 +283,8 @@ void LocalFrameViewLayoutContext::runOrScheduleAsynchronousTasks()
     if (m_postLayoutTaskTimer.isActive())
         return;
 
-    if (document()->isResolvingContainerQueries()) {
-        // We are doing layout from style resolution to resolve container queries.
+    if (document()->isInStyleInterleavedLayout()) {
+        // We are doing layout from style resolution to resolve container queries and/or anchor-positioned elements.
         m_postLayoutTaskTimer.startOneShot(0_s);
         return;
     }

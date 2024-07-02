@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -242,7 +242,7 @@ Vector<std::pair<WebCore::ProcessIdentifier, WebCore::RegistrableDomain>> WebPro
 {
     Vector<std::pair<WebCore::ProcessIdentifier, WebCore::RegistrableDomain>> result;
     for (Ref page : globalPages())
-        result.append(std::make_pair(page->process().coreProcessIdentifier(), RegistrableDomain(URL(page->currentURL()))));
+        result.append(std::make_pair(page->legacyMainFrameProcess().coreProcessIdentifier(), RegistrableDomain(URL(page->currentURL()))));
     return result;
 }
 
@@ -811,7 +811,7 @@ bool WebProcessProxy::shouldDropNearSuspendedAssertionAfterDelay() const
 
 void WebProcessProxy::addExistingWebPage(WebPageProxy& webPage, BeginsUsingDataStore beginsUsingDataStore)
 {
-    WEBPROCESSPROXY_RELEASE_LOG(Process, "addExistingWebPage: webPage=%p, pageProxyID=%" PRIu64 ", webPageID=%" PRIu64, &webPage, webPage.identifier().toUInt64(), webPage.webPageID().toUInt64());
+    WEBPROCESSPROXY_RELEASE_LOG(Process, "addExistingWebPage: webPage=%p, pageProxyID=%" PRIu64 ", webPageID=%" PRIu64, &webPage, webPage.identifier().toUInt64(), webPage.webPageIDInMainFrameProcess().toUInt64());
 
     ASSERT(!m_pageMap.contains(webPage.identifier()));
     ASSERT(!globalPageMap().contains(webPage.identifier()));
@@ -865,7 +865,7 @@ void WebProcessProxy::markIsNoLongerInPrewarmedPool()
 
 void WebProcessProxy::removeWebPage(WebPageProxy& webPage, EndsUsingDataStore endsUsingDataStore)
 {
-    WEBPROCESSPROXY_RELEASE_LOG(Process, "removeWebPage: webPage=%p, pageProxyID=%" PRIu64 ", webPageID=%" PRIu64, &webPage, webPage.identifier().toUInt64(), webPage.webPageID().toUInt64());
+    WEBPROCESSPROXY_RELEASE_LOG(Process, "removeWebPage: webPage=%p, pageProxyID=%" PRIu64 ", webPageID=%" PRIu64, &webPage, webPage.identifier().toUInt64(), webPage.webPageIDInMainFrameProcess().toUInt64());
     RefPtr removedPage = m_pageMap.take(webPage.identifier()).get();
     ASSERT_UNUSED(removedPage, removedPage == &webPage);
     removedPage = globalPageMap().take(webPage.identifier()).get();
@@ -1011,7 +1011,12 @@ bool WebProcessProxy::fullKeyboardAccessEnabled()
 {
     return false;
 }
-#endif
+
+bool WebProcessProxy::shouldDisableJITCage() const
+{
+    return false;
+}
+#endif // !PLATFORM(COCOA)
 
 bool WebProcessProxy::hasProvisionalPageWithID(WebPageProxyIdentifier pageID) const
 {
@@ -1065,7 +1070,7 @@ void WebProcessProxy::getNetworkProcessConnection(CompletionHandler<void(Network
 
 #if ENABLE(GPU_PROCESS)
 
-void WebProcessProxy::createGPUProcessConnection(IPC::Connection::Handle&& connectionIdentifier)
+void WebProcessProxy::createGPUProcessConnection(GPUProcessConnectionIdentifier identifier, IPC::Connection::Handle&& connectionHandle)
 {
     WebKit::GPUProcessConnectionParameters parameters;
 #if HAVE(TASK_IDENTITY_TOKEN)
@@ -1080,7 +1085,18 @@ void WebProcessProxy::createGPUProcessConnection(IPC::Connection::Handle&& conne
     parameters.ignoreInvalidMessageForTesting = ignoreInvalidMessageForTesting();
 #endif
     parameters.isLockdownModeEnabled = lockdownMode() == WebProcessProxy::LockdownMode::Enabled;
-    protectedProcessPool()->createGPUProcessConnection(*this, WTFMove(connectionIdentifier), WTFMove(parameters));
+    ASSERT(!m_gpuProcessConnectionIdentifier.isValid());
+    m_gpuProcessConnectionIdentifier = identifier;
+    protectedProcessPool()->createGPUProcessConnection(*this, WTFMove(connectionHandle), WTFMove(parameters));
+}
+
+void WebProcessProxy::gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnectionIdentifier identifier)
+{
+    if (identifier != m_gpuProcessConnectionIdentifier)
+        return;
+    WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "gpuProcessConnectionDidBecomeUnresponsive");
+    if (RefPtr process = protectedProcessPool()->gpuProcess())
+        process->childConnectionDidBecomeUnresponsive();
 }
 
 void WebProcessProxy::gpuProcessDidFinishLaunching()
@@ -1092,7 +1108,7 @@ void WebProcessProxy::gpuProcessDidFinishLaunching()
 void WebProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
 {
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "gpuProcessExited: reason=%" PUBLIC_LOG_STRING, processTerminationReasonToString(reason).characters());
-
+    m_gpuProcessConnectionIdentifier = { };
     for (Ref page : pages())
         page->gpuProcessExited(reason);
 }
@@ -1729,7 +1745,7 @@ RefPtr<API::Object> WebProcessProxy::transformObjectsToHandles(API::Object* obje
                 return API::FrameHandle::createAutoconverting(static_cast<const WebFrameProxy&>(object).frameID());
 
             case API::Object::Type::Page:
-                return API::PageHandle::createAutoconverting(static_cast<const WebPageProxy&>(object).identifier(), static_cast<const WebPageProxy&>(object).webPageID());
+                return API::PageHandle::createAutoconverting(static_cast<const WebPageProxy&>(object).identifier(), static_cast<const WebPageProxy&>(object).webPageIDInMainFrameProcess());
 
             default:
                 return &object;
@@ -2188,7 +2204,7 @@ void WebProcessProxy::createSpeechRecognitionServer(SpeechRecognitionServerIdent
 {
     RefPtr<WebPageProxy> targetPage;
     for (Ref page : pages()) {
-        if (page->webPageID() == identifier) {
+        if (page->webPageIDInMainFrameProcess() == identifier) {
             targetPage = WTFMove(page);
             break;
         }
@@ -2248,7 +2264,7 @@ void WebProcessProxy::muteCaptureInPagesExcept(WebCore::PageIdentifier pageID)
 {
 #if PLATFORM(COCOA)
     for (Ref page : globalPages()) {
-        if (page->webPageID() != pageID)
+        if (page->webPageIDInMainFrameProcess() != pageID)
             page->setMediaStreamCaptureMuted(true);
     }
 #else
@@ -2562,12 +2578,11 @@ void WebProcessProxy::wrapCryptoKey(const Vector<uint8_t>& key, CompletionHandle
     completionHandler(std::nullopt);
 }
 
-void WebProcessProxy::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& completionHandler)
+void WebProcessProxy::unwrapCryptoKey(const struct WrappedCryptoKey& wrappedKey, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& completionHandler)
 {
     std::optional<Vector<uint8_t>> masterKey(getWebCryptoMasterKey());
     if (masterKey) {
-        Vector<uint8_t> key;
-        if (unwrapSerializedCryptoKey(*masterKey, wrappedKey, key)) {
+        if (auto key = WebCore::unwrapCryptoKey(*masterKey, wrappedKey)) {
             completionHandler(WTFMove(key));
             return;
         }

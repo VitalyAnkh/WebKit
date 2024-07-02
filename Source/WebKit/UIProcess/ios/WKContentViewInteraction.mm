@@ -39,6 +39,7 @@
 #import "NativeWebTouchEvent.h"
 #import "PageClient.h"
 #import "PickerDismissalReason.h"
+#import "PlatformWritingToolsUtilities.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "RemoteLayerTreeViews.h"
 #import "RemoteScrollingCoordinatorProxyIOS.h"
@@ -73,7 +74,7 @@
 #import "WKSelectMenuListViewController.h"
 #import "WKSyntheticFlagsChangedWebEvent.h"
 #import "WKTapHighlightView.h"
-#import "WKTextIndicatorStyleType.h"
+#import "WKTextAnimationType.h"
 #import "WKTextInputListViewController.h"
 #import "WKTextInteractionWrapper.h"
 #import "WKTextPlaceholder.h"
@@ -198,8 +199,8 @@
 #import <pal/spi/cocoa/AVKitSPI.h>
 #endif
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-#import "WKSTextStyleManager.h"
+#if ENABLE(WRITING_TOOLS)
+#import "WKSTextAnimationManager.h"
 #import "WebKitSwiftSoftLink.h"
 #endif
 
@@ -1404,6 +1405,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #if USE(UICONTEXTMENU)
     _isDisplayingContextMenuWithAnimation = NO;
 #endif
+    _isUpdatingAccessoryView = NO;
 
 #if ENABLE(DATALIST_ELEMENT)
     _dataListTextSuggestionsInputView = nil;
@@ -1416,7 +1418,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     _autocorrectionContextNeedsUpdate = YES;
 
-    _page->process().updateTextCheckerState();
+    _page->legacyMainFrameProcess().updateTextCheckerState();
     _page->setScreenIsBeingCaptured([self screenIsBeingCaptured]);
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -1738,6 +1740,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
     [self _updateTapHighlight];
+
+    if (_page->editorState().selectionIsNone && _lastSelectionDrawingInfo.type == WebKit::WKSelectionDrawingInfo::SelectionType::None)
+        return;
 
     _selectionNeedsUpdate = YES;
     [self _updateChangedSelection:YES];
@@ -3091,7 +3096,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!_page->hasRunningProcess())
         return NO;
 
-    auto* connection = _page->process().connection();
+    auto* connection = _page->legacyMainFrameProcess().connection();
     if (!connection)
         return NO;
 
@@ -3101,7 +3106,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _isWaitingOnPositionInformation = YES;
     if (![self _hasValidOutstandingPositionInformationRequest:request])
         [self requestAsynchronousPositionInformationUpdate:request];
-    bool receivedResponse = connection->waitForAndDispatchImmediately<Messages::WebPageProxy::DidReceivePositionInformation>(_page->webPageID(), 1_s, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives) == IPC::Error::NoError;
+    bool receivedResponse = connection->waitForAndDispatchImmediately<Messages::WebPageProxy::DidReceivePositionInformation>(_page->webPageIDInMainFrameProcess(), 1_s, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives) == IPC::Error::NoError;
     _hasValidPositionInformation = receivedResponse && _positionInformation.canBeValid;
     return _hasValidPositionInformation;
 }
@@ -4260,7 +4265,8 @@ WEBCORE_COMMAND_FOR_WEBVIEW(pasteAndMatchStyle);
 
         if (originalTraits != newTraits) {
             RetainPtr descriptor = [[font fontDescriptor] ?: adoptNS([UIFontDescriptor new]) fontDescriptorWithSymbolicTraits:newTraits];
-            font = [UIFont fontWithDescriptor:descriptor.get() size:[font pointSize]];
+            if (RetainPtr fontWithTraits = [UIFont fontWithDescriptor:descriptor.get() size:[font pointSize]])
+                font = WTFMove(fontWithTraits);
         }
         [result setObject:font.get() forKey:NSFontAttributeName];
     }
@@ -4428,11 +4434,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     }
     if (action == @selector(cut:))
         return !editorState.isInPasswordField && editorState.isContentEditable && editorState.selectionIsRange;
-
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-    if (action == @selector(_swapCharacters:))
-        return [self unifiedTextReplacementBehavior] != WebKit::WebUnifiedTextReplacementBehavior::None && [super canPerformAction:action withSender:sender];
-#endif
 
     if (action == @selector(paste:) || action == @selector(_pasteAsQuotation:) || action == @selector(_pasteAndMatchStyle:) || action == @selector(pasteAndMatchStyle:)) {
         if (editorState.selectionIsNone || !editorState.isContentEditable)
@@ -4724,13 +4725,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     [self lookupForWebView:sender];
 }
-
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-- (void)_swapCharactersForWebView:(id)sender
-{
-    [super _swapCharacters:sender];
-}
-#endif
 
 - (void)accessibilityRetrieveSpeakSelectionContent
 {
@@ -5675,7 +5669,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     _pendingAutocorrectionContextHandler = WTFMove(completionHandler);
     _page->requestAutocorrectionContext();
 
-    if (_page->process().connection()->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAutocorrectionContext>(_page->webPageID(), 1_s, IPC::WaitForOption::DispatchIncomingSyncMessagesWhileWaiting) != IPC::Error::NoError)
+    if (_page->legacyMainFrameProcess().connection()->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAutocorrectionContext>(_page->webPageIDInMainFrameProcess(), 1_s, IPC::WaitForOption::DispatchIncomingSyncMessagesWhileWaiting) != IPC::Error::NoError)
         RELEASE_LOG(TextInput, "Timed out while waiting for autocorrection context.");
 
     if (_autocorrectionContextNeedsUpdate)
@@ -5880,6 +5874,9 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
 
 - (WKFormAccessoryView *)formAccessoryView
 {
+#if PLATFORM(APPLETV)
+    return nil;
+#else
     if (WebKit::defaultAlternateFormControlDesignEnabled())
         return nil;
 
@@ -5887,6 +5884,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
         _formAccessoryView = adoptNS([[WKFormAccessoryView alloc] initWithInputAssistantItem:self.inputAssistantItem delegate:self]);
 
     return _formAccessoryView.get();
+#endif
 }
 
 - (void)accessoryOpen
@@ -5900,6 +5898,11 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
 
 - (void)_updateAccessory
 {
+    if (_isUpdatingAccessoryView)
+        return;
+
+    SetForScope updateAccessoryScope { _isUpdatingAccessoryView, YES };
+
     auto* accessoryView = self.formAccessoryView; // Creates one, if needed.
 
     if ([accessoryView respondsToSelector:@selector(setNextPreviousItemsVisible:)])
@@ -6918,10 +6921,6 @@ static UITextAutocapitalizationType toUITextAutocapitalize(WebCore::Autocapitali
         return _focusedElementInformation.isWritingSuggestionsEnabled;
     }();
     traits.inlinePredictionType = allowsInlinePredictions ? UITextInlinePredictionTypeDefault : UITextInlinePredictionTypeNo;
-#endif
-
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-    [self _updateTextInputTraitsForUnifiedTextReplacement:traits];
 #endif
 
     [self _updateTextInputTraitsForInteractionTintColor];
@@ -8175,7 +8174,7 @@ static BOOL allPasteboardItemOriginsMatchOrigin(UIPasteboard *pasteboard, const 
     return foundAtLeastOneMatchingIdentifier;
 }
 
-- (void)_requestDOMPasteAccessForCategory:(WebCore::DOMPasteAccessCategory)pasteAccessCategory elementRect:(const WebCore::IntRect&)elementRect originIdentifier:(const String&)originIdentifier completionHandler:(CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&)completionHandler
+- (void)_requestDOMPasteAccessForCategory:(WebCore::DOMPasteAccessCategory)pasteAccessCategory requiresInteraction:(WebCore::DOMPasteRequiresInteraction)requiresInteraction elementRect:(const WebCore::IntRect&)elementRect originIdentifier:(const String&)originIdentifier completionHandler:(CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&)completionHandler
 {
     if (auto existingCompletionHandler = std::exchange(_domPasteRequestHandler, WTFMove(completionHandler))) {
         ASSERT_NOT_REACHED();
@@ -8184,7 +8183,7 @@ static BOOL allPasteboardItemOriginsMatchOrigin(UIPasteboard *pasteboard, const 
 
     _domPasteRequestCategory = pasteAccessCategory;
 
-    if (allPasteboardItemOriginsMatchOrigin(pasteboardForAccessCategory(pasteAccessCategory), originIdentifier)) {
+    if (requiresInteraction == WebCore::DOMPasteRequiresInteraction::No && allPasteboardItemOriginsMatchOrigin(pasteboardForAccessCategory(pasteAccessCategory), originIdentifier)) {
         [self _handleDOMPasteRequestWithResult:WebCore::DOMPasteAccessResponse::GrantedForCommand];
         return;
     }
@@ -8226,12 +8225,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     for (auto block : std::exchange(_actionsToPerformAfterEditorStateUpdate, { }))
         block();
-}
-
-- (void)_didClearEditorStateAfterPageTransition
-{
-    _cachedSelectedTextRange = nil;
-    _lastSelectionDrawingInfo = { };
 }
 
 - (void)_updateInitialWritingDirectionIfNecessary
@@ -8408,7 +8401,7 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
 #endif // HAVE(QUICKBOARD_CONTROLLER)
 
     // Presenting a fullscreen input view controller fully obscures the web view. Without taking this token, the web content process will get backgrounded.
-    _page->process().startBackgroundActivityForFullscreenInput();
+    _page->legacyMainFrameProcess().startBackgroundActivityForFullscreenInput();
 
     // FIXME: PUICQuickboardController does not present its view controller immediately, since it asynchronously
     // establishes a connection to QuickboardViewService before presenting the remote view controller.
@@ -8478,7 +8471,7 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
             [self becomeFirstResponder];
     }
 
-    _page->process().endBackgroundActivityForFullscreenInput();
+    _page->legacyMainFrameProcess().endBackgroundActivityForFullscreenInput();
 }
 
 - (void)focusedFormControlViewDidSubmit:(WKFocusedFormControlView *)view
@@ -9942,7 +9935,7 @@ static std::optional<WebCore::DragOperation> coreDragOperationForUIDropOperation
         dragOperationMask,
         { },
         WebKit::coreDragDestinationActionMask(dragDestinationAction),
-        _page->webPageID()
+        _page->webPageIDInMainFrameProcess()
     };
 }
 
@@ -10747,7 +10740,7 @@ static Vector<WebCore::IntSize> sizesOfPlaceholderElementsToInsertWhenDroppingIt
         context.get()[@"_WebViewURL"] = platformURL;
 
     if (_focusedElementInformation.nonAutofillCredentialType == WebCore::NonAutofillCredentialType::WebAuthn) {
-        context.get()[@"_page_id"] = [NSNumber numberWithUnsignedLong:_page->webPageID().toUInt64()];
+        context.get()[@"_page_id"] = [NSNumber numberWithUnsignedLong:_page->webPageIDInMainFrameProcess().toUInt64()];
         context.get()[@"_frame_id"] = [NSNumber numberWithUnsignedLong:_focusedElementInformation.frameID.object().toUInt64()];
         context.get()[@"_credential_type"] = WebCore::nonAutofillCredentialTypeString(_focusedElementInformation.nonAutofillCredentialType);
     }
@@ -11270,7 +11263,7 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
 - (void)setContinuousSpellCheckingEnabled:(BOOL)enabled
 {
     if (WebKit::TextChecker::setContinuousSpellCheckingEnabled(enabled))
-        _page->process().updateTextCheckerState();
+        _page->legacyMainFrameProcess().updateTextCheckerState();
 }
 
 - (void)setGrammarCheckingEnabled:(BOOL)enabled
@@ -11279,7 +11272,7 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
         return;
 
     WebKit::TextChecker::setGrammarCheckingEnabled(enabled);
-    _page->process().updateTextCheckerState();
+    _page->legacyMainFrameProcess().updateTextCheckerState();
 }
 
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
@@ -11540,7 +11533,7 @@ static BOOL applicationIsKnownToIgnoreMouseEvents(const char* &warningVersion)
     if (![textInputContext isKindOfClass:_WKTextInputContext.class])
         return nil;
     auto elementContext = textInputContext._textInputContext;
-    if (elementContext.webPageIdentifier != _page->webPageID())
+    if (elementContext.webPageIdentifier != _page->webPageIDInMainFrameProcess())
         return nil;
     return textInputContext;
 }
@@ -11746,33 +11739,28 @@ static RetainPtr<NSItemProvider> createItemProvider(const WebKit::WebPageProxy& 
     }];
 }
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
+#if ENABLE(WRITING_TOOLS_UI)
 
-- (void)addTextIndicatorStyleForID:(NSUUID *)uuid withStyleType:(WKTextIndicatorStyleType)styleType
+- (void)addTextAnimationForAnimationID:(NSUUID *)uuid withStyleType:(WKTextAnimationType)styleType
 {
-    if (!_page->preferences().textIndicatorStylingEnabled())
+    if (!_page->preferences().textAnimationsEnabled())
         return;
 
-    if (!_textStyleManager)
-        _textStyleManager = adoptNS([WebKit::allocWKSTextStyleManagerInstance() initWithDelegate:self]);
+    if (!_textAnimationManager)
+        _textAnimationManager = adoptNS([WebKit::allocWKSTextAnimationManagerInstance() initWithDelegate:self]);
 
-    [_textStyleManager addTextIndicatorStyleForID:uuid withStyleType:styleType];
+    [_textAnimationManager addTextAnimationForAnimationID:uuid withStyleType:styleType];
 }
 
-- (void)removeTextIndicatorStyleForID:(NSUUID *)uuid
+- (void)removeTextAnimationForAnimationID:(NSUUID *)uuid
 {
-    if (!_page->preferences().textIndicatorStylingEnabled())
+    if (!_page->preferences().textAnimationsEnabled())
         return;
 
-    if (!_textStyleManager)
+    if (!_textAnimationManager)
         return;
 
-    [_textStyleManager removeTextIndicatorStyleForID:uuid];
-}
-
-- (WebKit::WebUnifiedTextReplacementBehavior)unifiedTextReplacementBehavior
-{
-    return _page->configuration().unifiedTextReplacementBehavior();
+    [_textAnimationManager removeTextAnimationForAnimationID:uuid];
 }
 
 #endif
@@ -13119,9 +13107,9 @@ inline static NSString *extendSelectionCommand(UITextLayoutDirection direction)
     return !!_suppressSelectionAssistantReasons;
 }
 
-#pragma mark - WKSTextStyleSourceDelegate
+#pragma mark - WKSTextAnimationSourceDelegate
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
+#if ENABLE(WRITING_TOOLS_UI)
 - (void)targetedPreviewForID:(NSUUID *)uuid completionHandler:(void (^)(UITargetedPreview *))completionHandler
 {
     auto textUUID = WTF::UUID::fromNSUUID(uuid);
@@ -13152,15 +13140,15 @@ inline static NSString *extendSelectionCommand(UITextLayoutDirection direction)
     });
 }
 
-- (void)updateTextIndicatorStyleVisibilityForID:(NSUUID *)uuid visible:(BOOL)visible completionHandler:(void (^)(void))completionHandler
+- (void)updateUnderlyingTextVisibilityForTextAnimationID:(NSUUID *)uuid visible:(BOOL)visible completionHandler:(void (^)(void))completionHandler
 {
     auto textUUID = WTF::UUID::fromNSUUID(uuid);
-    _page->updateTextIndicatorStyleVisibilityForID(*textUUID, visible, [completionHandler = makeBlockPtr(completionHandler)] () {
+    _page->updateUnderlyingTextVisibilityForTextAnimationID(*textUUID, visible, [completionHandler = makeBlockPtr(completionHandler)] () {
         completionHandler();
     });
 }
 
-- (UIView *)containingViewForTextIndicatorStyle
+- (UIView *)containingViewForTextAnimationType
 {
     return self;
 }
@@ -13182,6 +13170,55 @@ inline static NSString *extendSelectionCommand(UITextLayoutDirection direction)
 }
 
 #endif // USE(BROWSERENGINEKIT)
+
+#if ENABLE(WRITING_TOOLS)
+
+- (UIWritingToolsAllowedInputOptions)writingToolsAllowedInputOptions
+{
+    return [_webView writingToolsAllowedInputOptions];
+}
+
+- (UIWritingToolsBehavior)writingToolsBehavior
+{
+    return [_webView writingToolsBehavior];
+}
+
+- (void)willBeginWritingToolsSession:(WTSession *)session requestContexts:(void (^)(NSArray<WTContext *> *))completion
+{
+    [_webView willBeginWritingToolsSession:session requestContexts:completion];
+}
+
+- (void)didBeginWritingToolsSession:(WTSession *)session contexts:(NSArray<WTContext *> *)contexts
+{
+    [_webView didBeginWritingToolsSession:session contexts:contexts];
+}
+
+- (void)proofreadingSession:(WTSession *)session didReceiveSuggestions:(NSArray<WTTextSuggestion *> *)suggestions processedRange:(NSRange)range inContext:(WTContext *)context finished:(BOOL)finished
+{
+    [_webView proofreadingSession:session didReceiveSuggestions:suggestions processedRange:range inContext:context finished:finished];
+}
+
+- (void)proofreadingSession:(WTSession *)session didUpdateState:(WTTextSuggestionState)state forSuggestionWithUUID:(NSUUID *)suggestionUUID inContext:(WTContext *)context
+{
+    [_webView proofreadingSession:session didUpdateState:state forSuggestionWithUUID:suggestionUUID inContext:context];
+}
+
+- (void)didEndWritingToolsSession:(WTSession *)session accepted:(BOOL)accepted
+{
+    [_webView didEndWritingToolsSession:session accepted:accepted];
+}
+
+- (void)compositionSession:(WTSession *)session didReceiveText:(NSAttributedString *)attributedText replacementRange:(NSRange)range inContext:(WTContext *)context finished:(BOOL)finished
+{
+    [_webView compositionSession:session didReceiveText:attributedText replacementRange:range inContext:context finished:finished];
+}
+
+- (void)writingToolsSession:(WTSession *)session didReceiveAction:(WTAction)action
+{
+    [_webView writingToolsSession:session didReceiveAction:action];
+}
+
+#endif
 
 #if USE(APPLE_INTERNAL_SDK)
 #import <WebKitAdditions/WKContentViewInteractionAdditionsAfter.mm>

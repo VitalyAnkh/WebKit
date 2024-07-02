@@ -112,7 +112,9 @@ RegisterSet RegisterSetBuilder::macroClobberedGPRs()
 RegisterSet RegisterSetBuilder::macroClobberedFPRs()
 {
 #if CPU(X86_64)
-    return { };
+    RegisterSetBuilder builder;
+    builder.add(MacroAssembler::fpTempRegister, IgnoreVectors);
+    return builder.buildAndValidate();
 #elif CPU(ARM64)
     RegisterSetBuilder builder;
     builder.add(MacroAssembler::fpTempRegister, IgnoreVectors);
@@ -411,9 +413,6 @@ RegisterSet RegisterSetBuilder::wasmPinnedRegisters()
         result.add(GPRInfo::wasmContextInstancePointer, IgnoreVectors);
     if constexpr (GPRInfo::wasmBoundsCheckingSizeRegister != InvalidGPRReg)
         result.add(GPRInfo::wasmBoundsCheckingSizeRegister, IgnoreVectors);
-#if OS(WINDOWS)
-    result.add(GPRInfo::wasmScratchCSR0, IgnoreVectors);
-#endif
     return result;
 }
 #endif

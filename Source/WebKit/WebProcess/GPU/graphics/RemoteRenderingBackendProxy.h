@@ -108,7 +108,7 @@ public:
     bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) override;
 
     // Messages to be sent.
-    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::PixelFormat, OptionSet<WebCore::ImageBufferOptions>);
+    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::ImageBufferPixelFormat, OptionSet<WebCore::ImageBufferOptions>);
     void releaseImageBuffer(WebCore::RenderingResourceIdentifier);
     bool getPixelBufferForImageBuffer(WebCore::RenderingResourceIdentifier, const WebCore::PixelBufferFormat& destinationFormat, const WebCore::IntRect& srcRect, std::span<uint8_t> result);
     void putPixelBufferForImageBuffer(WebCore::RenderingResourceIdentifier, const WebCore::PixelBuffer&, const WebCore::IntRect& srcRect, const WebCore::IntPoint& destPoint, WebCore::AlphaPremultiplication destFormat);
@@ -130,7 +130,7 @@ public:
     Function<bool()> flushImageBuffers();
 #endif
 
-    std::unique_ptr<RemoteDisplayListRecorderProxy> createDisplayListRecorder(WebCore::RenderingResourceIdentifier, const WebCore::FloatSize&, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::PixelFormat, OptionSet<WebCore::ImageBufferOptions>);
+    std::unique_ptr<RemoteDisplayListRecorderProxy> createDisplayListRecorder(WebCore::RenderingResourceIdentifier, const WebCore::FloatSize&, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::ImageBufferPixelFormat, OptionSet<WebCore::ImageBufferOptions>);
 
     struct BufferSet {
         RefPtr<WebCore::ImageBuffer> front;
@@ -160,14 +160,16 @@ public:
 
     RenderingBackendIdentifier ensureBackendCreated();
 
-    bool isGPUProcessConnectionClosed() const { return !m_streamConnection; }
+    bool isGPUProcessConnectionClosed() const { return !m_connection; }
 
     void didInitialize(IPC::Semaphore&& wakeUpSemaphore, IPC::Semaphore&& clientWaitSemaphore);
 
-    IPC::StreamClientConnection& streamConnection();
+    RefPtr<IPC::StreamClientConnection> connection();
 
     SerialFunctionDispatcher& dispatcher() { return m_dispatcher; }
     Ref<WorkQueue> workQueue() { return m_queue; }
+
+    void didBecomeUnresponsive();
 
     static constexpr Seconds defaultTimeout = 15_s;
 private:
@@ -203,7 +205,7 @@ private:
 
     SerialFunctionDispatcher& m_dispatcher;
     WeakPtr<GPUProcessConnection> m_gpuProcessConnection; // Only for main thread operation.
-    RefPtr<IPC::StreamClientConnection> m_streamConnection;
+    RefPtr<IPC::StreamClientConnection> m_connection;
     RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
     RenderingBackendIdentifier m_identifier { RenderingBackendIdentifier::generate() };
     RemoteResourceCacheProxy m_remoteResourceCacheProxy { *this };
@@ -216,6 +218,7 @@ private:
 
     RenderingUpdateID m_renderingUpdateID;
     RenderingUpdateID m_didRenderingUpdateID;
+    bool m_isResponsive { true };
 };
 
 } // namespace WebKit

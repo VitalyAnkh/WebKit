@@ -56,9 +56,11 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
         wgslPipelineLayout = ShaderModule::convertPipelineLayout(*pipelineLayout);
 
     auto prepareResult = WGSL::prepare(*ast, entryPoint, wgslPipelineLayout ? &*wgslPipelineLayout : nullptr);
-    // FIXME: return the actual error
-    if (std::holds_alternative<WGSL::Error>(prepareResult))
+    if (std::holds_alternative<WGSL::Error>(prepareResult)) {
+        auto wgslError = std::get<WGSL::Error>(prepareResult);
+        *error = [NSError errorWithDomain:@"WebGPU" code:1 userInfo:@{ NSLocalizedDescriptionKey: wgslError.message() }];
         return std::nullopt;
+    }
 
     auto& result = std::get<WGSL::PrepareResult>(prepareResult);
     auto iterator = result.entryPoints.find(entryPoint);
@@ -73,7 +75,12 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
             continue;
 
         auto constantValue = WGSL::evaluate(*kvp.value.defaultValue, wgslConstantValues);
-        auto addResult = wgslConstantValues.add(kvp.key, constantValue);
+        if (!constantValue) {
+            if (error)
+                *error = [NSError errorWithDomain:@"WebGPU" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"Failed to evaluate override value" }];
+            return std::nullopt;
+        }
+        auto addResult = wgslConstantValues.add(kvp.key, *constantValue);
         ASSERT_UNUSED(addResult, addResult.isNewEntry);
     }
 

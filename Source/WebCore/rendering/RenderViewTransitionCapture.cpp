@@ -52,10 +52,20 @@ bool RenderViewTransitionCapture::setCapturedSize(const LayoutSize& size, const 
 {
     if (m_overflowRect == overflowRect && intrinsicSize() == size && m_layerToLayoutOffset == layerToLayoutOffset)
         return false;
+    m_imageIntrinsicSize = size;
     setIntrinsicSize(size);
     m_overflowRect = overflowRect;
     m_layerToLayoutOffset = layerToLayoutOffset;
     return true;
+}
+
+void RenderViewTransitionCapture::intrinsicSizeChanged()
+{
+    if (intrinsicSize() == m_imageIntrinsicSize)
+        return;
+    setIntrinsicSize(m_imageIntrinsicSize);
+    setPreferredLogicalWidthsDirty(true);
+    setNeedsLayout();
 }
 
 void RenderViewTransitionCapture::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -101,6 +111,12 @@ LayoutPoint RenderViewTransitionCapture::captureContentInset() const
     LayoutPoint location = m_localOverflowRect.location();
     location.moveBy(-visualOverflowRect().location());
     return location;
+}
+
+Node* RenderViewTransitionCapture::nodeForHitTest() const
+{
+    // The view transition pseudo-elements should hit-test to their originating element (the document element).
+    return document().documentElement();
 }
 
 String RenderViewTransitionCapture::debugDescription() const

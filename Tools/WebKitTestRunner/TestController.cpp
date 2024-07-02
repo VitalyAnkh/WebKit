@@ -1109,6 +1109,8 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
     auto resetMessageBody = adoptWK(WKMutableDictionaryCreate());
 
+    if (resetStage == ResetStage::AfterTest)
+        WKPageStopLoading(m_mainWebView->page());
     setValue(resetMessageBody, "ResetStage", resetStage == ResetStage::AfterTest ? "AfterTest" : "BeforeTest");
 
     setValue(resetMessageBody, "ShouldGC", m_gcBetweenTests);
@@ -1172,6 +1174,11 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 #endif
 
     WKPageClearUserMediaState(m_mainWebView->page());
+
+    WKPageSetPageZoomFactor(m_mainWebView->page(), 1);
+    WKPageSetTextZoomFactor(m_mainWebView->page(), 1);
+
+    WKPageClearOpenerForTesting(m_mainWebView->page());
 
     // Reset notification permissions
     m_webNotificationProvider.reset();

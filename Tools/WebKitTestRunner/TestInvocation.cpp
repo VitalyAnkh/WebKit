@@ -166,18 +166,15 @@ void TestInvocation::invoke()
 {
     TestController::singleton().configureViewForTest(*this);
 
-    WKPageSetAddsVisitedLinks(TestController::singleton().mainWebView()->page(), false);
+    auto page = TestController::singleton().mainWebView()->page();
+
+    WKPageSetAddsVisitedLinks(page, false);
 
     m_textOutput.clear();
 
     TestController::singleton().setShouldLogHistoryClientCallbacks(shouldLogHistoryClientCallbacks());
 
     WKHTTPCookieStoreSetHTTPCookieAcceptPolicy(WKWebsiteDataStoreGetHTTPCookieStore(TestController::singleton().websiteDataStore()), kWKHTTPCookieAcceptPolicyOnlyFromMainDocumentDomain, nullptr, nullptr);
-
-    // FIXME: We should clear out visited links here.
-
-    WKPageSetPageZoomFactor(TestController::singleton().mainWebView()->page(), 1);
-    WKPageSetTextZoomFactor(TestController::singleton().mainWebView()->page(), 1);
 
     postPageMessage("BeginTest", createTestSettingsDictionary());
 
@@ -359,6 +356,9 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
         auto messageBodyDictionary = dictionaryValue(messageBody);
         m_pixelResultIsPending = booleanValue(messageBodyDictionary, "PixelResultIsPending");
         if (!m_pixelResultIsPending) {
+            // Postpone page load stop if pixel result is still pending since
+            // cancelled image loads will paint as broken images.
+            WKPageStopLoading(TestController::singleton().mainWebView()->page());
             m_pixelResult = static_cast<WKImageRef>(value(messageBodyDictionary, "PixelResult"));
             ASSERT(!m_pixelResult || m_dumpPixels);
         }
@@ -689,6 +689,9 @@ void TestInvocation::didReceiveMessageFromInjectedBundle(WKStringRef messageName
     if (WKStringIsEqualToUTF8CString(messageName, "DumpBackForwardList"))
         return postPageMessage("DumpBackForwardList");
 
+    if (WKStringIsEqualToUTF8CString(messageName, "StopLoading"))
+        return WKPageStopLoading(TestController::singleton().mainWebView()->page());
+
     ASSERT_NOT_REACHED();
 }
 
@@ -942,11 +945,15 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         return adoptWK(WKUInt64Create(count));
     }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "GrantNotificationPermission"))
+    if (WKStringIsEqualToUTF8CString(messageName, "GrantNotificationPermission")) {
+        WKPageSetPermissionLevelForTesting(TestController::singleton().mainWebView()->page(), stringValue(messageBody), true);
         return adoptWK(WKBooleanCreate(TestController::singleton().grantNotificationPermission(stringValue(messageBody))));
+    }
 
-    if (WKStringIsEqualToUTF8CString(messageName, "DenyNotificationPermission"))
+    if (WKStringIsEqualToUTF8CString(messageName, "DenyNotificationPermission")) {
+        WKPageSetPermissionLevelForTesting(TestController::singleton().mainWebView()->page(), stringValue(messageBody), false);
         return adoptWK(WKBooleanCreate(TestController::singleton().denyNotificationPermission(stringValue(messageBody))));
+    }
 
     if (WKStringIsEqualToUTF8CString(messageName, "DenyNotificationPermissionOnPrompt"))
         return adoptWK(WKBooleanCreate(TestController::singleton().denyNotificationPermissionOnPrompt(stringValue(messageBody))));
@@ -1395,6 +1402,15 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         TestController::singleton().setRequestStorageAccessThrowsExceptionUntilReload(booleanValue(messageBody));
         return nullptr;
     }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "ExecuteCommand")) {
+        auto dictionary = dictionaryValue(messageBody);
+        WKPageExecuteCommandForTesting(TestController::singleton().mainWebView()->page(), stringValue(dictionary, "Command"), stringValue(dictionary, "Value"));
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "IsCommandEnabled"))
+        return adoptWK(WKBooleanCreate(WKPageIsEditingCommandEnabledForTesting(TestController::singleton().mainWebView()->page(), stringValue(messageBody))));
 
     ASSERT_NOT_REACHED();
     return nullptr;

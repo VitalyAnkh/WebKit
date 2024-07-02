@@ -62,8 +62,8 @@ public:
     RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() override;
     bool needsPreparationForDisplay() const override { return true; }
     void prepareForDisplay() override;
-    PixelFormat pixelFormat() const override;
-    void reshape(int width, int height, int oldWidth, int oldHeight) override;
+    ImageBufferPixelFormat pixelFormat() const override;
+    void reshape() override;
 
 
     RefPtr<ImageBuffer> surfaceBufferToImageBuffer(SurfaceBuffer) override;
@@ -72,7 +72,7 @@ public:
     ExceptionOr<void> configure(GPUCanvasConfiguration&&) override;
     void unconfigure() override;
     ExceptionOr<RefPtr<GPUTexture>> getCurrentTexture() override;
-    ExceptionOr<RefPtr<ImageBitmap>> getCurrentTextureAsImageBitmap(ImageBuffer&, bool originClean) override;
+    RefPtr<ImageBuffer> transferToImageBuffer() override;
 
     bool isWebGPU() const override { return true; }
 

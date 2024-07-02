@@ -30,6 +30,7 @@
 #include "config.h"
 #include "StyleResolver.h"
 
+#include "AnchorPositionEvaluator.h"
 #include "BlendingKeyframes.h"
 #include "CSSCustomPropertyValue.h"
 #include "CSSFontSelector.h"
@@ -97,7 +98,7 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(Resolver);
 
 class Resolver::State {
 public:
-    State() { }
+    State() = default;
     State(const Element& element, const RenderStyle* parentStyle, const RenderStyle* documentElementStyle = nullptr)
         : m_element(&element)
         , m_parentStyle(parentStyle)

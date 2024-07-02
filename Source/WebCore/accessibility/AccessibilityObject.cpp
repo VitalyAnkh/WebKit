@@ -1637,7 +1637,9 @@ std::optional<SimpleRange> AccessibilityObject::rangeForCharacterRange(const Cha
 
 VisiblePositionRange AccessibilityObject::lineRangeForPosition(const VisiblePosition& visiblePosition) const
 {
-    return { startOfLine(visiblePosition), endOfLine(visiblePosition) };
+    VisiblePosition startPosition = startOfLine(visiblePosition);
+    VisiblePosition endPosition = nextLineEndPosition(startPosition);
+    return { startPosition, endPosition };
 }
 
 #if PLATFORM(MAC)
@@ -2976,14 +2978,12 @@ Element* AccessibilityObject::element() const
 
 const RenderStyle* AccessibilityObject::style() const
 {
-    const RenderStyle* style = nullptr;
     if (auto* renderer = this->renderer())
-        style = &renderer->style();
-    if (!style) {
-        if (auto* element = this->element())
-            style = element->computedStyle();
-    }
-    return style;
+        return &renderer->style();
+
+    if (auto* element = this->element())
+        return element->computedStyle();
+    return nullptr;
 }
 
 bool AccessibilityObject::isValueAutofillAvailable() const
@@ -3932,8 +3932,8 @@ bool AccessibilityObject::isAXHidden() const
 {
     if (isFocused())
         return false;
-    
-    return Accessibility::findAncestor<AccessibilityObject>(*this, true, [] (const AccessibilityObject& object) {
+
+    return Accessibility::findAncestor<AccessibilityObject>(*this, true, [] (const auto& object) {
         return object.isARIAHidden();
     }) != nullptr;
 }

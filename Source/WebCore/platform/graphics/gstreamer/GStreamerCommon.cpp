@@ -143,16 +143,25 @@ bool getVideoSizeAndFormatFromCaps(const GstCaps* caps, WebCore::IntSize& size, 
         else
             format = GST_VIDEO_FORMAT_UNKNOWN;
         stride = 0;
-        int width = 0, height = 0;
-        gst_structure_get_int(structure, "width", &width);
-        gst_structure_get_int(structure, "height", &height);
+
+        auto width = gstStructureGet<int>(structure, "width"_s);
+        if (!width) {
+            GST_WARNING("Missing width field in %" GST_PTR_FORMAT, caps);
+            return false;
+        }
+        auto height = gstStructureGet<int>(structure, "height"_s);
+        if (!height) {
+            GST_WARNING("Missing height field in %" GST_PTR_FORMAT, caps);
+            return false;
+        }
+
         if (!gst_structure_get_fraction(structure, "pixel-aspect-ratio", &pixelAspectRatioNumerator, &pixelAspectRatioDenominator)) {
             pixelAspectRatioNumerator = 1;
             pixelAspectRatioDenominator = 1;
         }
 
-        size.setWidth(width);
-        size.setHeight(height);
+        size.setWidth(*width);
+        size.setHeight(*height);
     }
 
     return true;
@@ -180,8 +189,19 @@ std::optional<FloatSize> getVideoResolutionFromCaps(const GstCaps* caps)
         pixelAspectRatioNumerator = GST_VIDEO_INFO_PAR_N(&info);
         pixelAspectRatioDenominator = GST_VIDEO_INFO_PAR_D(&info);
     } else {
-        gst_structure_get_int(structure, "width", &width);
-        gst_structure_get_int(structure, "height", &height);
+        auto widthField = gstStructureGet<int>(structure, "width"_s);
+        if (!widthField) {
+            GST_WARNING("Missing width field in %" GST_PTR_FORMAT, caps);
+            return std::nullopt;
+        }
+        auto heightField = gstStructureGet<int>(structure, "height"_s);
+        if (!heightField) {
+            GST_WARNING("Missing height field in %" GST_PTR_FORMAT, caps);
+            return std::nullopt;
+        }
+
+        width = *widthField;
+        height = *heightField;
         gst_structure_get_fraction(structure, "pixel-aspect-ratio", &pixelAspectRatioNumerator, &pixelAspectRatioDenominator);
     }
 
@@ -477,6 +497,55 @@ void unregisterPipeline(const GRefPtr<GstElement>& pipeline)
     GUniquePtr<gchar> name(gst_object_get_name(GST_OBJECT_CAST(pipeline.get())));
     Locker locker { s_activePipelinesMapLock };
     activePipelinesMap().remove(span(name.get()));
+}
+
+void WebCoreLogObserver::didLogMessage(const WTFLogChannel& channel, WTFLogLevel level, Vector<JSONLogValue>&& values)
+{
+#ifndef GST_DISABLE_GST_DEBUG
+    if (!shouldEmitLogMessage(channel))
+        return;
+
+    StringBuilder builder;
+    for (auto& [_, value] : values)
+        builder.append(value);
+
+    auto logString = builder.toString();
+    GstDebugLevel gstDebugLevel;
+    switch (level) {
+    case WTFLogLevel::Error:
+        gstDebugLevel = GST_LEVEL_ERROR;
+        break;
+    case WTFLogLevel::Debug:
+        gstDebugLevel = GST_LEVEL_DEBUG;
+        break;
+    case WTFLogLevel::Always:
+    case WTFLogLevel::Info:
+        gstDebugLevel = GST_LEVEL_INFO;
+        break;
+    case WTFLogLevel::Warning:
+        gstDebugLevel = GST_LEVEL_WARNING;
+        break;
+    };
+    gst_debug_log(debugCategory(), gstDebugLevel, __FILE__, __FUNCTION__, __LINE__, nullptr, "%s", logString.utf8().data());
+#else
+    UNUSED_PARAM(channel);
+    UNUSED_PARAM(level);
+    UNUSED_PARAM(values);
+#endif
+}
+
+void WebCoreLogObserver::addWatch(const Logger& logger)
+{
+    auto totalObservers = m_totalObservers.exchangeAdd(1);
+    if (!totalObservers)
+        logger.addObserver(*this);
+}
+
+void WebCoreLogObserver::removeWatch(const Logger& logger)
+{
+    auto totalObservers = m_totalObservers.exchangeSub(1);
+    if (totalObservers <= 1)
+        logger.removeObserver(*this);
 }
 
 void deinitializeGStreamer()
@@ -943,9 +1012,17 @@ static std::optional<RefPtr<JSON::Value>> gstStructureValueToJSON(const GValue* 
     if (valueType == G_TYPE_FLOAT)
         return JSON::Value::create(static_cast<double>(g_value_get_float(value)))->asValue();
 
-    // FIXME: bigint support missing in JSON.
-    if (valueType == G_TYPE_UINT64)
-        return JSON::Value::create(static_cast<int>(g_value_get_uint64(value)))->asValue();
+    // BigInt is not officially supported in JSON, so the workaround is to serialize to a string. See:
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt#use_within_json
+    if (valueType == G_TYPE_UINT64) {
+        auto jsonObject = JSON::Object::create();
+        auto resultValue = jsonObject->asObject();
+        if (!resultValue)
+            return nullptr;
+        auto bigIntValue = JSON::Value::create(makeString(g_value_get_uint64(value)));
+        resultValue->setValue("$bigint"_s, bigIntValue->asValue().releaseNonNull());
+        return resultValue;
+    }
 
     if (valueType == G_TYPE_STRING)
         return JSON::Value::create(makeString(span(g_value_get_string(value))))->asValue();
@@ -1349,5 +1426,14 @@ GRefPtr<GstBuffer> wrapSpanData(const std::span<const uint8_t>& span)
 } // namespace WebCore
 
 #undef IS_GST_FULL_1_18
+
+#if !GST_CHECK_VERSION(1, 20, 0)
+GstBuffer* gst_buffer_new_memdup(gconstpointer data, gsize size)
+{
+    gpointer copiedData = g_memdup2(data, size);
+
+    return gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), copiedData, size, 0, size, copiedData, g_free);
+}
+#endif
 
 #endif // USE(GSTREAMER)

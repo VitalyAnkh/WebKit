@@ -1033,21 +1033,6 @@ void WebProcess::removeWebFrame(FrameIdentifier frameID, std::optional<WebPagePr
     parentProcessConnection()->send(Messages::WebProcessProxy::DidDestroyFrame(frameID, *pageID), 0);
 }
 
-WebPageGroupProxy* WebProcess::webPageGroup(PageGroup* pageGroup)
-{
-    for (auto& page : m_pageGroupMap.values()) {
-        if (page->corePageGroup() == pageGroup)
-            return page.get();
-    }
-
-    return 0;
-}
-
-WebPageGroupProxy* WebProcess::webPageGroup(PageGroupIdentifier pageGroupID)
-{
-    return m_pageGroupMap.get(pageGroupID);
-}
-
 WebPageGroupProxy* WebProcess::webPageGroup(const WebPageGroupData& pageGroupData)
 {
     auto result = m_pageGroupMap.add(pageGroupData.pageGroupID, nullptr);
@@ -1206,7 +1191,7 @@ static NetworkProcessConnectionInfo getNetworkProcessConnection(IPC::Connection&
 {
     NetworkProcessConnectionInfo connectionInfo;
     auto requestConnection = [&]() -> bool {
-        auto sendResult = connection.sendSync(Messages::WebProcessProxy::GetNetworkProcessConnection(), 0);
+        auto sendResult = connection.sendSync(Messages::WebProcessProxy::GetNetworkProcessConnection(), 0, IPC::Timeout::infinity(), IPC::SendSyncOption::MaintainOrderingWithAsyncMessages);
         if (!sendResult.succeeded()) {
             RELEASE_LOG_ERROR(Process, "getNetworkProcessConnection: Failed to send message or receive invalid message: error %" PUBLIC_LOG_STRING, IPC::errorAsString(sendResult.error()).characters());
             failedToGetNetworkProcessConnection();
@@ -1368,13 +1353,14 @@ GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
         auto connectionIdentifiers = IPC::Connection::createConnectionIdentifierPair();
         if (!connectionIdentifiers)
             CRASH();
-        protectedParentProcessConnection()->send(Messages::WebProcessProxy::CreateGPUProcessConnection(WTFMove(connectionIdentifiers->client)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
+
         Ref gpuConnection = IPC::Connection::createServerConnection(WTFMove(connectionIdentifiers->server));
 #if ENABLE(IPC_TESTING_API)
         if (gpuConnection->ignoreInvalidMessageForTesting())
             gpuConnection->setIgnoreInvalidMessageForTesting();
 #endif
         m_gpuProcessConnection = GPUProcessConnection::create(WTFMove(gpuConnection));
+        protectedParentProcessConnection()->send(Messages::WebProcessProxy::CreateGPUProcessConnection(m_gpuProcessConnection->identifier(),  WTFMove(connectionIdentifiers->client)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
         for (auto& page : m_pageMap.values()) {
             // If page is null, then it is currently being constructed.
             if (page)
@@ -1384,11 +1370,9 @@ GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
     return *m_gpuProcessConnection;
 }
 
-void WebProcess::gpuProcessConnectionClosed(GPUProcessConnection& connection)
+void WebProcess::gpuProcessConnectionClosed()
 {
     ASSERT(m_gpuProcessConnection);
-    ASSERT_UNUSED(connection, m_gpuProcessConnection == &connection);
-
     m_gpuProcessConnection = nullptr;
 
     for (auto& page : m_pageMap.values()) {
@@ -1400,6 +1384,12 @@ void WebProcess::gpuProcessConnectionClosed(GPUProcessConnection& connection)
     if (m_audioMediaStreamTrackRendererInternalUnitManager)
         m_audioMediaStreamTrackRendererInternalUnitManager->restartAllUnits();
 #endif
+}
+
+void WebProcess::gpuProcessConnectionDidBecomeUnresponsive()
+{
+    ASSERT(m_gpuProcessConnection);
+    parentProcessConnection()->send(Messages::WebProcessProxy::GPUProcessConnectionDidBecomeUnresponsive(m_gpuProcessConnection->identifier()), 0);
 }
 
 #if PLATFORM(COCOA) && USE(LIBWEBRTC)
@@ -1650,10 +1640,10 @@ void WebProcess::prepareToSuspend(bool isSuspensionImminent, MonotonicTime estim
 
 #if PLATFORM(COCOA)
     destroyRenderingResources();
+    accessibilityRelayProcessSuspended(true);
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    accessibilityRelayProcessSuspended(true);
     updateFreezerStatus();
 #endif
 
@@ -1726,7 +1716,7 @@ void WebProcess::processDidResume()
     cancelMarkAllLayersVolatile();
     unfreezeAllLayerTrees();
 
-#if PLATFORM(IOS_FAMILY)
+#if PLATFORM(COCOA)
     accessibilityRelayProcessSuspended(false);
 #endif
 

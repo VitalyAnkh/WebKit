@@ -1771,6 +1771,9 @@ void GraphicsLayerCA::setVisibleAndCoverageRects(const VisibleAndCoverageRects& 
 
 bool GraphicsLayerCA::needsCommit(const CommitState& commitState)
 {
+    if (renderingIsSuppressedIncludingDescendants())
+        return false;
+
     if (commitState.ancestorHadChanges)
         return true;
     if (m_uncommittedChanges)
@@ -2531,10 +2534,9 @@ void GraphicsLayerCA::updateBackdropFilters(CommitState& commitState)
     }
 
     // If nothing actually changed, no need to touch the layer properties.
-    if (!(m_uncommittedChanges & BackdropFiltersChanged)) {
+    if (!(m_uncommittedChanges & BackdropFiltersChanged) && m_backdropLayer) {
         // Opaque state depends on ancestor state, and is cheap to set, so just unconditionally update it.
-        if (m_backdropLayer)
-            m_backdropLayer->setBackdropRootIsOpaque(commitState.backdropRootIsOpaque);
+        m_backdropLayer->setBackdropRootIsOpaque(commitState.backdropRootIsOpaque);
         return;
     }
 

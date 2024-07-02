@@ -1299,19 +1299,19 @@ void LocalFrameView::willDoLayout(SingleThreadWeakPtr<RenderElement> layoutRoot)
     forceLayoutParentViewIfNeeded();
 }
 
-void LocalFrameView::didLayout(SingleThreadWeakPtr<RenderElement> layoutRoot)
+void LocalFrameView::didLayout(SingleThreadWeakPtr<RenderElement> layoutRoot, bool didRunSimplifiedLayout)
 {
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
     auto* layoutRootEnclosingLayer = layoutRoot->enclosingLayer();
-    layoutRootEnclosingLayer->updateLayerPositionsAfterLayout(!is<RenderView>(*layoutRoot), layoutContext().needsFullRepaint());
+    layoutRootEnclosingLayer->updateLayerPositionsAfterLayout(!is<RenderView>(*layoutRoot), layoutContext().needsFullRepaint(), didRunSimplifiedLayout ? RenderLayer::CanUseSimplifiedRepaintPass::Yes : RenderLayer::CanUseSimplifiedRepaintPass::No);
 
     m_updateCompositingLayersIsPending = true;
 
     Ref document = *m_frame->document();
 
 #if PLATFORM(COCOA) || PLATFORM(WIN) || PLATFORM(GTK)
-    if (auto* cache = document->existingAXObjectCache())
+    if (CheckedPtr cache = document->existingAXObjectCache())
         cache->postNotification(layoutRoot.get(), AXObjectCache::AXLayoutComplete);
 #endif
 
@@ -1602,6 +1602,9 @@ void LocalFrameView::addViewportConstrainedObject(RenderLayerModelObject& object
 
         if (auto scrollingCoordinator = this->scrollingCoordinator())
             scrollingCoordinator->frameViewFixedObjectsDidChange(*this);
+
+        if (RefPtr page = m_frame->page())
+            page->chrome().client().didAddOrRemoveViewportConstrainedObjects();
     }
 }
 
@@ -1614,6 +1617,9 @@ void LocalFrameView::removeViewportConstrainedObject(RenderLayerModelObject& obj
         // FIXME: In addFixedObject() we only call this if there's a platform widget,
         // why isn't the same check being made here?
         updateCanBlitOnScrollRecursively();
+
+        if (RefPtr page = m_frame->page())
+            page->chrome().client().didAddOrRemoveViewportConstrainedObjects();
     }
 }
 
@@ -1627,7 +1633,10 @@ LayoutSize LocalFrameView::expandedLayoutViewportSize(const LayoutSize& baseLayo
     if (layoutViewportHeight > documentHeight)
         return baseLayoutViewportSize;
 
-    return { baseLayoutViewportSize.width(), std::min(documentHeight, LayoutUnit((1 + heightExpansionFactor) * layoutViewportHeight)) };
+    if (auto expandedHeight = LayoutUnit((1 + heightExpansionFactor) * layoutViewportHeight); expandedHeight < documentHeight)
+        layoutViewportHeight = expandedHeight;
+
+    return { baseLayoutViewportSize.width(), std::min(documentHeight, layoutViewportHeight) };
 }
 
 LayoutRect LocalFrameView::computeUpdatedLayoutViewportRect(const LayoutRect& layoutViewport, const LayoutRect& documentRect, const LayoutSize& unobscuredContentSize, const LayoutRect& unobscuredContentRect, const LayoutSize& baseLayoutViewportSize, const LayoutPoint& stableLayoutViewportOriginMin, const LayoutPoint& stableLayoutViewportOriginMax, LayoutViewportConstraint constraint)
@@ -5602,8 +5611,10 @@ void LocalFrameView::setScrollingPerformanceTestingEnabled(bool scrollingPerform
 void LocalFrameView::createScrollbarsController()
 {
     auto* page = m_frame->page();
-    if (!page)
+    if (!page) {
+        ScrollView::createScrollbarsController();
         return;
+    }
 
     page->chrome().client().ensureScrollbarsController(*page, *this);
 }

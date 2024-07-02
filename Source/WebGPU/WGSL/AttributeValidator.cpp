@@ -305,7 +305,14 @@ void AttributeValidator::visit(AST::Structure& structure)
         }
 
         unsigned currentSize = UNLIKELY(size.hasOverflowed()) ? std::numeric_limits<unsigned>::max() : size.value();
-        unsigned offset = UNLIKELY(size.hasOverflowed()) ? currentSize : WTF::roundUpToMultipleOf(*fieldAlignment, currentSize);
+        unsigned offset;
+        if (UNLIKELY(size.hasOverflowed()))
+            offset = currentSize;
+        else {
+            CheckedUint32 checkedOffset = WTF::roundUpToMultipleOf(*fieldAlignment, static_cast<uint64_t>(currentSize));
+            offset = UNLIKELY(checkedOffset.hasOverflowed()) ? std::numeric_limits<unsigned>::max() : checkedOffset.value();
+        }
+
         member.m_offset = offset;
 
         alignment = std::max(alignment, *fieldAlignment);
@@ -317,7 +324,13 @@ void AttributeValidator::visit(AST::Structure& structure)
         previousMember = &member;
         previousSize = UNLIKELY(size.hasOverflowed()) ? currentSize : offset + typeSize;
     }
-    auto finalSize = UNLIKELY(size.hasOverflowed()) ? std::numeric_limits<unsigned>::max() : WTF::roundUpToMultipleOf(alignment, size.value());
+    unsigned finalSize;
+    if (UNLIKELY(size.hasOverflowed()))
+        finalSize = std::numeric_limits<unsigned>::max();
+    else {
+        CheckedUint32 checkedFinalSize = WTF::roundUpToMultipleOf(alignment, static_cast<uint64_t>(size.value()));
+        finalSize = UNLIKELY(checkedFinalSize.hasOverflowed()) ? std::numeric_limits<unsigned>::max() : checkedFinalSize.value();
+    }
     previousMember->m_padding = finalSize - previousSize;
     structure.m_alignment = alignment;
     structure.m_size = finalSize;

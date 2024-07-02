@@ -1008,7 +1008,7 @@ Vector<TargetedElementInfo> ElementTargetingController::extractTargets(Vector<Re
 
             return targetRenderer->isOutOfFlowPositioned()
                 && (!style.hasBackground() || !style.opacity())
-                && style.usedPointerEvents() == PointerEvents::None;
+                && targetRenderer->usedPointerEvents() == PointerEvents::None;
         }();
 
         if (shouldSkipTargetThatCoversViewport)
@@ -1785,7 +1785,7 @@ RefPtr<Image> ElementTargetingController::snapshotIgnoringVisibilityAdjustment(E
     if (snapshotRect.isEmpty())
         return { };
 
-    auto buffer = snapshotFrameRect(*mainFrame, snapshotRect, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() });
+    auto buffer = snapshotFrameRect(*mainFrame, snapshotRect, { { }, ImageBufferPixelFormat::BGRA8, DestinationColorSpace::SRGB() });
     return BitmapImage::create(ImageBuffer::sinkIntoNativeImage(WTFMove(buffer)));
 }
 

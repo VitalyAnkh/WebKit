@@ -105,6 +105,12 @@ static inline bool isYahooMail(Document& document)
 }
 #endif
 
+#if USE(APPLE_INTERNAL_SDK)
+#import <WebKitAdditions/QuirksAdditions.cpp>
+#else
+static inline bool needsDesktopUserAgentInternal(const URL&) { return false; }
+#endif
+
 Quirks::Quirks(Document& document)
     : m_document(document)
 {
@@ -357,6 +363,16 @@ bool Quirks::shouldAvoidUsingIOS13ForGmail() const
 #else
     return false;
 #endif
+}
+
+// mail.google.com rdar://128360054
+// FIXME (rdar://130624461): Remove this quirk once Gmail adopts the `writingsuggestions` attribute.
+bool Quirks::shouldDisableWritingSuggestionsByDefault() const
+{
+    if (!needsQuirks())
+        return false;
+    auto& url = m_document->topDocument().url();
+    return url.host() == "mail.google.com"_s;
 }
 
 void Quirks::updateStorageAccessUserAgentStringQuirks(HashMap<RegistrableDomain, String>&& userAgentStringQuirks)
@@ -1798,6 +1814,11 @@ bool Quirks::needsIPhoneUserAgent(const URL& url)
     UNUSED_PARAM(url);
 #endif
     return false;
+}
+
+bool Quirks::needsDesktopUserAgent(const URL& url)
+{
+    return needsDesktopUserAgentInternal(url);
 }
 
 bool Quirks::shouldIgnorePlaysInlineRequirementQuirk() const

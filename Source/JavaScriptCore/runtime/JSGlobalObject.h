@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "DeferredWorkTimer.h"
 #include "JSSegmentedVariableObject.h"
 #include "LazyClassStructure.h"
 #include "RegExpGlobalData.h"
@@ -505,6 +506,10 @@ public:
 #undef DECLARE_TYPED_ARRAY_TYPE_WATCHPOINT
     Vector<std::unique_ptr<ObjectAdaptiveStructureWatchpoint>> m_missWatchpoints;
 
+    void addWeakTicket(DeferredWorkTimer::Ticket);
+    void clearWeakTickets();
+    std::unique_ptr<WeakHashSet<DeferredWorkTimer::TicketData>> m_weakTickets;
+
     inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
     inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
     inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
@@ -560,8 +565,6 @@ public:
     bool m_requiresTrustedTypes { true };
     bool m_needsSiteSpecificQuirks { false };
     unsigned m_globalLexicalBindingEpoch { 1 };
-    ScopeOffset m_lastStaticGlobalOffset;
-    IdentifierSet m_varNamesDeclaredViaEval;
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
@@ -642,9 +645,6 @@ public:
     JS_EXPORT_PRIVATE static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-
-    bool hasVarDeclaration(const RefPtr<UniquedStringImpl>&);
 
     bool canDeclareGlobalFunction(const Identifier&);
     template<BindingCreationContext> void createGlobalFunctionBinding(const Identifier&);

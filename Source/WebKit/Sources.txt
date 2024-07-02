@@ -233,6 +233,7 @@ Shared/SessionState.cpp
 Shared/SharedStringHashStore.cpp
 Shared/SharedStringHashTableReadOnly.cpp
 Shared/SharedStringHashTable.cpp
+Shared/Site.cpp
 Shared/UserData.cpp
 Shared/WebBackForwardListItem.cpp
 Shared/WebCompiledContentRuleList.cpp
@@ -438,6 +439,7 @@ UIProcess/WebPageGroup.cpp
 UIProcess/WebPageInjectedBundleClient.cpp
 UIProcess/WebPageProxy.cpp
 UIProcess/WebPageProxyMessageReceiverRegistration.cpp
+UIProcess/WebPageProxyTesting.cpp
 UIProcess/WebPasteboardProxy.cpp
 UIProcess/WebPermissionControllerProxy.cpp
 UIProcess/WebPreferences.cpp
@@ -861,6 +863,7 @@ WebProcess/WebPage/WebOpenPanelResultListener.cpp
 WebProcess/WebPage/WebPage.cpp @no-unify
 WebProcess/WebPage/WebPageGroupProxy.cpp
 WebProcess/WebPage/WebPageOverlay.cpp
+WebProcess/WebPage/WebPageTesting.cpp
 WebProcess/WebPage/WebURLSchemeHandlerProxy.cpp
 WebProcess/WebPage/WebURLSchemeTaskProxy.cpp
 WebProcess/WebPage/WebUndoStep.cpp

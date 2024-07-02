@@ -30,16 +30,14 @@
 
 #import "AppKitSPI.h"
 #import "WKSafeBrowsingWarning.h"
+#import "WKTextAnimationType.h"
 #import "WKTextFinderClient.h"
-#import "WKTextIndicatorStyleType.h"
 #import "WKWebViewConfigurationPrivate.h"
 #import <WebKit/WKUIDelegatePrivate.h>
 #import "WebBackForwardList.h"
 #import "WebFrameProxy.h"
 #import "WebPageProxy.h"
 #import "WebProcessProxy.h"
-#import "WebTextReplacementData.h"
-#import "WebUnifiedTextReplacementContextData.h"
 #import "WebViewImpl.h"
 #import "_WKFrameHandleInternal.h"
 #import "_WKHitTestResultInternal.h"
@@ -49,7 +47,6 @@
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 
 #if USE(APPLE_INTERNAL_SDK)
-#import <WebKitAdditions/UnifiedTextReplacementAdditions.h>
 #import <WebKitAdditions/WebMultiRepresentationHEICAttachmentAdditions.h>
 #endif
 
@@ -676,6 +673,13 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
     _impl->attributedSubstringForProposedRange(nsRange, completionHandlerPtr);
 }
 
+// FIXME: actually return valid information.
+// rdar://130702677
+- (void)unionRectForCharacterRange:(NSRange)range completionHandler:(void(^)(NSRect rect))completionHandler
+{
+    completionHandler(NSZeroRect);
+}
+
 - (void)firstRectForCharacterRange:(NSRange)theRange completionHandler:(void(^)(NSRect firstRect, NSRange actualRange))completionHandlerPtr
 {
     _impl->firstRectForCharacterRange(theRange, completionHandlerPtr);
@@ -1234,13 +1238,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (void)_web_didChangeContentSize:(NSSize)newSize
 {
 }
-
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-- (BOOL)_web_wantsCompleteUnifiedTextReplacementBehavior
-{
-    return [self _wantsCompleteUnifiedTextReplacementBehavior];
-}
-#endif
 
 #if ENABLE(DRAG_SUPPORT)
 

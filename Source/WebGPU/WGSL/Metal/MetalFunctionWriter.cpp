@@ -76,6 +76,7 @@ public:
     void visit(AST::Function&) override;
     void visit(AST::Structure&) override;
     void visit(AST::Variable&) override;
+    void visit(AST::ConstAssert&) override;
 
     void visit(const Type*, AST::Expression&);
     void visit(const Type*, AST::CallExpression&);
@@ -197,16 +198,23 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
         {
             IndentationScope scope(m_indent);
             m_stringBuilder.append(
-                m_indent, "packed_vec<T, 3> vec3;\n"_s,
+                m_indent, "T x;\n"_s,
+                m_indent, "T y;\n"_s,
+                m_indent, "T z;\n"_s,
                 m_indent, "uint8_t __padding[sizeof(T)];\n"_s,
                 m_indent, "\n"_s,
-                m_indent, "PackedVec3() : vec3() { }\n"_s,
+                m_indent, "PackedVec3() { }\n"_s,
                 m_indent, "\n"_s,
-                m_indent, "PackedVec3(packed_vec<T, 3> v) : vec3(v) { }\n"_s,
+                m_indent, "PackedVec3(packed_vec<T, 3> v) : x(v.x), y(v.y), z(v.z) { }\n"_s,
                 m_indent, "\n"_s,
-                m_indent, "operator packed_vec<T, 3>() { return vec3; }\n"_s,
+                m_indent, "operator vec<T, 3>() { return vec<T, 3>(x, y, z); }\n"_s,
+                m_indent, "operator packed_vec<T, 3>() { return packed_vec<T, 3>(x, y, z); }\n"_s,
                 m_indent, "\n"_s,
-                m_indent, "operator float3() { return as_type<vec<float, 3>>(vec<T, 3>(vec3)); }\n"_s
+                m_indent, "T operator[](int i) const { return i ? i == 2 ? z : y : x; }\n"_s,
+                m_indent, "device T& operator[](int i) device { return i ? i == 2 ? z : y : x; }\n"_s,
+                m_indent, "constant T& operator[](int i) constant { return i ? i == 2 ? z : y : x; }\n"_s,
+                m_indent, "thread T& operator[](int i) thread { return i ? i == 2 ? z : y : x; }\n"_s,
+                m_indent, "threadgroup T& operator[](int i) threadgroup { return i ? i == 2 ? z : y : x; }\n"_s
             );
         }
         m_stringBuilder.append(m_indent, "};\n\n"_s);
@@ -732,6 +740,11 @@ bool FunctionDefinitionWriter::emitPackedVector(const Types::Vector& vector)
 void FunctionDefinitionWriter::visit(AST::Variable& variable)
 {
     serializeVariable(variable);
+}
+
+void FunctionDefinitionWriter::visit(AST::ConstAssert&)
+{
+    // const_assert should not generate any code
 }
 
 void FunctionDefinitionWriter::visitGlobal(AST::Variable& variable)
@@ -2408,6 +2421,8 @@ void FunctionDefinitionWriter::visit(AST::LoopStatement& statement)
 {
     m_stringBuilder.append("while (true) {\n"_s);
     {
+        if (statement.containsSwitch())
+            m_stringBuilder.append("bool __continuing = false;\n"_s, m_indent);
         auto& continuing = statement.continuing();
         SetForScope continuingScope(m_continuing, continuing.has_value() ? &*continuing : nullptr);
 
@@ -2476,6 +2491,21 @@ void FunctionDefinitionWriter::visit(AST::SwitchStatement& statement)
         visitClause(clause);
     visitClause(statement.defaultClause(), true);
     m_stringBuilder.append('\n', m_indent, '}');
+    if (statement.isInsideLoop()) {
+        m_stringBuilder.append('\n', m_indent, "if (__continuing) {"_s);
+        {
+            auto scope = IndentationScope(m_indent);
+            visit(*m_continuing);
+        }
+        m_stringBuilder.append('\n', m_indent, '}');
+    } else if (statement.isNestedInsideLoop()) {
+        m_stringBuilder.append('\n', m_indent, "if (__continuing) {"_s);
+        {
+            auto scope = IndentationScope(m_indent);
+            m_stringBuilder.append('\n', m_indent, "break;"_s);
+        }
+        m_stringBuilder.append('\n', m_indent, '}');
+    }
 }
 
 void FunctionDefinitionWriter::visit(AST::BreakStatement&)
@@ -2483,8 +2513,13 @@ void FunctionDefinitionWriter::visit(AST::BreakStatement&)
     m_stringBuilder.append("break"_s);
 }
 
-void FunctionDefinitionWriter::visit(AST::ContinueStatement&)
+void FunctionDefinitionWriter::visit(AST::ContinueStatement& statement)
 {
+    if (statement.isFromSwitchToContinuing()) {
+        m_stringBuilder.append("__continuing = true;\n"_s);
+        m_stringBuilder.append(m_indent, "break"_s);
+        return;
+    }
     if (m_continuing) {
         visit(*m_continuing);
         m_stringBuilder.append(m_indent);

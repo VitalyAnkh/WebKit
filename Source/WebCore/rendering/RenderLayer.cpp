@@ -961,7 +961,7 @@ void RenderLayer::updateLayerPositionsAfterStyleChange()
     recursiveUpdateLayerPositions(flagsForUpdateLayerPositions(*this));
 }
 
-void RenderLayer::updateLayerPositionsAfterLayout(bool isRelayoutingSubtree, bool didFullRepaint)
+void RenderLayer::updateLayerPositionsAfterLayout(bool isRelayoutingSubtree, bool didFullRepaint, CanUseSimplifiedRepaintPass canUseSimplifiedRepaintPass)
 {
     auto updateLayerPositionFlags = [&](bool isRelayoutingSubtree, bool didFullRepaint) {
         auto flags = flagsForUpdateLayerPositions(*this);
@@ -977,10 +977,10 @@ void RenderLayer::updateLayerPositionsAfterLayout(bool isRelayoutingSubtree, boo
     LOG(Compositing, "RenderLayer %p updateLayerPositionsAfterLayout", this);
     willUpdateLayerPositions();
 
-    recursiveUpdateLayerPositions(updateLayerPositionFlags(isRelayoutingSubtree, didFullRepaint));
+    recursiveUpdateLayerPositions(updateLayerPositionFlags(isRelayoutingSubtree, didFullRepaint), canUseSimplifiedRepaintPass);
 }
 
-void RenderLayer::recursiveUpdateLayerPositions(OptionSet<UpdateLayerPositionsFlag> flags)
+void RenderLayer::recursiveUpdateLayerPositions(OptionSet<UpdateLayerPositionsFlag> flags, CanUseSimplifiedRepaintPass canUseSimplifiedRepaintPass)
 {
     updateLayerPosition(&flags);
     if (m_scrollableArea)
@@ -1018,6 +1018,21 @@ void RenderLayer::recursiveUpdateLayerPositions(OptionSet<UpdateLayerPositionsFl
             clearRepaintRects();
             return;
         }
+
+        auto mayNeedRepaintRectUpdate = [&] {
+            if (canUseSimplifiedRepaintPass == CanUseSimplifiedRepaintPass::No)
+                return true;
+            if (!renderer().didVisitDuringLastLayout())
+                return false;
+            if (auto* renderBox = this->renderBox(); renderBox && renderBox->hasRenderOverflow() && renderBox->hasTransformRelatedProperty()) {
+                // Disable optimization for subtree when dealing with overflow as RenderLayer is not sized to enclose overflow.
+                // FIXME: This should check if transform related property has changed.
+                canUseSimplifiedRepaintPass = CanUseSimplifiedRepaintPass::No;
+            }
+            return true;
+        };
+        if (!mayNeedRepaintRectUpdate())
+            return;
 
         // FIXME: Paint offset cache does not work with RenderLayers as there is not a 1-to-1
         // mapping between them and the RenderObjects. It would be neat to enable
@@ -1075,7 +1090,7 @@ void RenderLayer::recursiveUpdateLayerPositions(OptionSet<UpdateLayerPositionsFl
         flags.add(SeenCompositedScrollingLayer);
 
     for (RenderLayer* child = firstChild(); child; child = child->nextSibling())
-        child->recursiveUpdateLayerPositions(flags);
+        child->recursiveUpdateLayerPositions(flags, canUseSimplifiedRepaintPass);
 
     if (m_scrollableArea)
         m_scrollableArea->updateMarqueePosition();
@@ -4142,17 +4157,21 @@ RenderLayer::HitLayer RenderLayer::hitTestLayer(RenderLayer* rootLayer, RenderLa
     updateLayerListsIfNeeded();
 
     if (!isSelfPaintingLayer() && !hasSelfPaintingLayerDescendant())
-        return { nullptr };
+        return { };
+
+    // Renderers that are captured in a view transition are not hit tested.
+    if (renderer().effectiveCapturedInViewTransition())
+        return { };
 
     // If we're hit testing 'SVG clip content' (aka. RenderSVGResourceClipper) do not early exit.
     if (!request.svgClipContent()) {
         // SVG resource layers and their children are never hit tested.
         if (is<RenderSVGResourceContainer>(m_enclosingSVGHiddenOrResourceContainer))
-            return { nullptr };
+            return { };
 
         // Hidden SVG containers (<defs> / <symbol> ...) are never hit tested directly.
         if (is<RenderSVGHiddenContainer>(renderer()))
-            return { nullptr };
+            return { };
     }
 
     // The natural thing would be to keep HitTestingTransformState on the stack, but it's big, so we heap-allocate.
@@ -4168,7 +4187,7 @@ RenderLayer::HitLayer RenderLayer::hitTestLayer(RenderLayer* rootLayer, RenderLa
             ClipRect clipRect = backgroundClipRect(clipRectsContext);
             // Test the enclosing clip now.
             if (!clipRect.intersects(hitTestLocation))
-                return { nullptr };
+                return { };
         }
 
         return hitTestLayerByApplyingTransform(rootLayer, containerLayer, request, result, hitTestRect, hitTestLocation, transformState, zOffset);
@@ -4192,7 +4211,7 @@ RenderLayer::HitLayer RenderLayer::hitTestLayer(RenderLayer* rootLayer, RenderLa
         std::optional<TransformationMatrix> invertedMatrix = localTransformState->m_accumulatedTransform.inverse();
         // If the z-vector of the matrix is negative, the back is facing towards the viewer.
         if (invertedMatrix && invertedMatrix.value().m33() < 0)
-            return { nullptr, 0 };
+            return { };
     }
 
     // The following are used for keeping track of the z-depth of the hit point of 3d-transformed
@@ -4219,7 +4238,7 @@ RenderLayer::HitLayer RenderLayer::hitTestLayer(RenderLayer* rootLayer, RenderLa
     auto offsetFromRoot = offsetFromAncestor(rootLayer);
     // FIXME: We need to correctly hit test the clip-path when we have a RenderInline too.
     if (auto* rendererBox = this->renderBox(); rendererBox && !rendererBox->hitTestClipPath(hitTestLocation, toLayoutPoint(offsetFromRoot - toLayoutSize(rendererLocation()))))
-        return { nullptr };
+        return { };
 
     // Begin by walking our list of positive layers from highest z-index down to the lowest z-index.
     auto hitLayer = hitTestList(positiveZOrderLayers(), rootLayer, request, result, hitTestRect, hitTestLocation, localTransformState.get(), zOffsetForDescendantsPtr, depthSortDescendants);
@@ -4388,7 +4407,7 @@ RenderLayer::HitLayer RenderLayer::hitTestTransformedLayerInFragments(RenderLaye
             return hitLayer;
     }
     
-    return { nullptr };
+    return { };
 }
 
 RenderLayer::HitLayer RenderLayer::hitTestLayerByApplyingTransform(RenderLayer* rootLayer, RenderLayer* containerLayer, const HitTestRequest& request, HitTestResult& result,
@@ -4399,7 +4418,7 @@ RenderLayer::HitLayer RenderLayer::hitTestLayerByApplyingTransform(RenderLayer* 
 
     // If the transform can't be inverted, then don't hit test this layer at all.
     if (!newTransformState->m_accumulatedTransform.isInvertible())
-        return { nullptr };
+        return { };
 
     // Compute the point and the hit test rect in the coords of this layer by using the values
     // from the transformState, which store the point and quad in the coords of the last flattened
@@ -4449,10 +4468,10 @@ bool RenderLayer::hitTestContents(const HitTestRequest& request, HitTestResult& 
 RenderLayer::HitLayer RenderLayer::hitTestList(LayerList layerIterator, RenderLayer* rootLayer, const HitTestRequest& request, HitTestResult& result, const LayoutRect& hitTestRect, const HitTestLocation& hitTestLocation, const HitTestingTransformState* transformState, double* zOffsetForDescendants, bool depthSortDescendants)
 {
     if (layerIterator.begin() == layerIterator.end())
-        return { nullptr };
+        return { };
 
     if (!hasSelfPaintingLayerDescendant())
-        return { nullptr };
+        return { };
 
     auto resultLayer = HitLayer { nullptr, -std::numeric_limits<double>::infinity() };
 

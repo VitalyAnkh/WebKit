@@ -178,6 +178,7 @@ void SpeculativeJIT::cachedGetById(
     Node* node, CodeOrigin codeOrigin, GPRReg baseTagGPROrNone, GPRReg basePayloadGPR, GPRReg resultTagGPR, GPRReg resultPayloadGPR, GPRReg stubInfoGPR,
     GPRReg scratchGPR, CacheableIdentifier identifier, Jump slowPathTarget, SpillRegistersMode spillMode, AccessType type)
 {
+    UNUSED_PARAM(node);
     UNUSED_PARAM(stubInfoGPR);
     UNUSED_PARAM(scratchGPR);
     // This is a hacky fix for when the register allocator decides to alias the base payload with the result tag. This only happens
@@ -219,12 +220,12 @@ void SpeculativeJIT::cachedGetById(
         slowPath = slowPathCall(
             slowCases, this, appropriateGetByIdOptimizeFunction(type),
             JSValueRegs(resultTagGPR, resultPayloadGPR),
-            CellValue(basePayloadGPR), LinkableConstant::globalObject(*this, node), TrustedImmPtr(gen.stubInfo()));
+            CellValue(basePayloadGPR), TrustedImmPtr(gen.stubInfo()));
     } else {
         slowPath = slowPathCall(
             slowCases, this, appropriateGetByIdOptimizeFunction(type),
             JSValueRegs(resultTagGPR, resultPayloadGPR),
-            JSValueRegs(baseTagGPROrNone, basePayloadGPR), LinkableConstant::globalObject(*this, node), TrustedImmPtr(gen.stubInfo()));
+            JSValueRegs(baseTagGPROrNone, basePayloadGPR), TrustedImmPtr(gen.stubInfo()));
     }
 
     addGetById(gen, slowPath.get());
@@ -235,6 +236,7 @@ void SpeculativeJIT::cachedGetByIdWithThis(Node* node,
     CodeOrigin codeOrigin, GPRReg baseTagGPROrNone, GPRReg basePayloadGPR, GPRReg thisTagGPR, GPRReg thisPayloadGPR, GPRReg resultTagGPR, GPRReg resultPayloadGPR, GPRReg stubInfoGPR, GPRReg scratchGPR,
     CacheableIdentifier identifier, const JumpList& slowPathTarget)
 {
+    UNUSED_PARAM(node);
     UNUSED_PARAM(stubInfoGPR);
     UNUSED_PARAM(scratchGPR);
     RegisterSetBuilder usedRegisters = this->usedRegisters();
@@ -257,7 +259,7 @@ void SpeculativeJIT::cachedGetByIdWithThis(Node* node,
         slowPath = slowPathCall(
             slowCases, this, operationGetByIdWithThisOptimize,
             JSValueRegs(resultTagGPR, resultPayloadGPR),
-            CellValue(basePayloadGPR), CellValue(thisPayloadGPR), LinkableConstant::globalObject(*this, node), TrustedImmPtr(gen.stubInfo()));
+            CellValue(basePayloadGPR), CellValue(thisPayloadGPR), TrustedImmPtr(gen.stubInfo()));
     } else {
         ASSERT(baseTagGPROrNone != InvalidGPRReg);
         ASSERT(thisTagGPR != InvalidGPRReg);
@@ -265,7 +267,7 @@ void SpeculativeJIT::cachedGetByIdWithThis(Node* node,
         slowPath = slowPathCall(
             slowCases, this, operationGetByIdWithThisOptimize,
             JSValueRegs(resultTagGPR, resultPayloadGPR),
-            JSValueRegs(baseTagGPROrNone, basePayloadGPR), JSValueRegs(thisTagGPR, thisPayloadGPR), LinkableConstant::globalObject(*this, node), TrustedImmPtr(gen.stubInfo()));
+            JSValueRegs(baseTagGPROrNone, basePayloadGPR), JSValueRegs(thisTagGPR, thisPayloadGPR), TrustedImmPtr(gen.stubInfo()));
     }
 
     addGetByIdWithThis(gen, slowPath.get());
@@ -665,7 +667,7 @@ void SpeculativeJIT::emitCall(Node* node)
             loadArgumentsGPR(GPRInfo::returnValueGPR);
             move(TrustedImm32(numUsedStackSlots), scratchGPR1);
             emitSetVarargsFrame(*this, GPRInfo::returnValueGPR, false, scratchGPR1, scratchGPR1);
-            addPtr(TrustedImm32(-(sizeof(CallerFrameAndPC) + WTF::roundUpToMultipleOf(stackAlignmentBytes(), 6 * sizeof(void*)))), scratchGPR1, stackPointerRegister);
+            addPtr(TrustedImm32(-(sizeof(CallerFrameAndPC) + WTF::roundUpToMultipleOf<stackAlignmentBytes()>(6 * sizeof(void*)))), scratchGPR1, stackPointerRegister);
             
             callOperation(operationSetupVarargsFrame, GPRInfo::returnValueGPR, LinkableConstant::globalObject(*this, node), scratchGPR1, JSValueRegs(argumentsTagGPR, argumentsPayloadGPR), data->firstVarArgOffset, GPRInfo::returnValueGPR);
             addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), GPRInfo::returnValueGPR, stackPointerRegister);
@@ -883,7 +885,7 @@ void SpeculativeJIT::emitCall(Node* node)
         // - The caller frame and PC of a call to operationCallDirectEvalSloppy/operationCallDirectEvalStrict.
         // - Potentially two arguments on the stack.
         unsigned requiredBytes = sizeof(CallerFrameAndPC) + sizeof(CallFrame*) * 2;
-        requiredBytes = WTF::roundUpToMultipleOf(stackAlignmentBytes(), requiredBytes);
+        requiredBytes = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(requiredBytes);
         subPtr(TrustedImm32(requiredBytes), stackPointerRegister);
         setupArguments<decltype(operationCallDirectEvalSloppy)>(calleeFrameGPR, evalScopeGPR, evalThisValueJSR);
         prepareForExternalCall();
@@ -1877,11 +1879,11 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
             if (baseRegs.tagGPR() == InvalidGPRReg) {
                 slowPath = slowPathCall(
                     slowCases, this, operationGetByValOptimize,
-                    resultRegs, CellValue(baseRegs.payloadGPR()), propertyRegs, LinkableConstant::globalObject(*this, node), TrustedImmPtr(gen.stubInfo()), nullptr);
+                    resultRegs, CellValue(baseRegs.payloadGPR()), propertyRegs, TrustedImmPtr(gen.stubInfo()), nullptr);
             } else {
                 slowPath = slowPathCall(
                     slowCases, this, operationGetByValOptimize,
-                    resultRegs, baseRegs, propertyRegs, LinkableConstant::globalObject(*this, node), TrustedImmPtr(gen.stubInfo()), nullptr);
+                    resultRegs, baseRegs, propertyRegs, TrustedImmPtr(gen.stubInfo()), nullptr);
             }
 
             addGetByVal(gen, slowPath.get());
