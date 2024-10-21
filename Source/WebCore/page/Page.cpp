@@ -543,7 +543,7 @@ void Page::firstTimeInitialization()
     });
 }
 
-void Page::clearPreviousItemFromAllPages(HistoryItem* item)
+void Page::clearPreviousItemFromAllPages(BackForwardItemIdentifier itemID)
 {
     for (auto& page : allPages()) {
         RefPtr localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
@@ -551,7 +551,7 @@ void Page::clearPreviousItemFromAllPages(HistoryItem* item)
             return;
 
         CheckedRef controller = localMainFrame->history();
-        if (item == controller->previousItem()) {
+        if (controller->previousItem() && controller->previousItem()->identifier() == itemID) {
             controller->clearPreviousItem();
             return;
         }
@@ -5004,6 +5004,11 @@ void Page::didBeginWritingToolsSession(const WritingTools::Session& session, con
 void Page::proofreadingSessionDidReceiveSuggestions(const WritingTools::Session& session, const Vector<WritingTools::TextSuggestion>& suggestions, const WritingTools::Context& context, bool finished)
 {
     m_writingToolsController->proofreadingSessionDidReceiveSuggestions(session, suggestions, context, finished);
+}
+
+void Page::proofreadingSessionDidCompletePartialReplacement(const WritingTools::Session& session, const Vector<WritingTools::TextSuggestion>& suggestions, const WritingTools::Context& context, bool finished)
+{
+    m_writingToolsController->proofreadingSessionDidCompletePartialReplacement(session, suggestions, context, finished);
 }
 
 void Page::proofreadingSessionDidUpdateStateForSuggestion(const WritingTools::Session& session, WritingTools::TextSuggestion::State state, const WritingTools::TextSuggestion& suggestion, const WritingTools::Context& context)

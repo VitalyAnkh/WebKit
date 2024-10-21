@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,6 @@
 #pragma once
 
 #include <wtf/Compiler.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include <wtf/dtoa.h>
 #include <wtf/text/IntegerToStringConversion.h>
@@ -75,7 +73,7 @@ class StringTypeAdapter<FloatingPoint, typename std::enable_if_t<std::is_floatin
 public:
     StringTypeAdapter(FloatingPoint number)
     {
-        m_length = numberToStringAndSize(number, m_buffer);
+        m_length = numberToStringAndSize(number, m_buffer).size();
     }
 
     unsigned length() const { return m_length; }
@@ -95,16 +93,14 @@ public:
     static FormattedNumber fixedPrecision(double number, unsigned significantFigures = 6, TrailingZerosPolicy trailingZerosTruncatingPolicy = TrailingZerosPolicy::Truncate)
     {
         FormattedNumber numberFormatter;
-        numberToFixedPrecisionString(number, significantFigures, numberFormatter.m_buffer, trailingZerosTruncatingPolicy == TrailingZerosPolicy::Truncate);
-        numberFormatter.m_length = std::strlen(&numberFormatter.m_buffer[0]);
+        numberFormatter.m_length = numberToFixedPrecisionString(number, significantFigures, numberFormatter.m_buffer, trailingZerosTruncatingPolicy == TrailingZerosPolicy::Truncate).size();
         return numberFormatter;
     }
 
     static FormattedNumber fixedWidth(double number, unsigned decimalPlaces)
     {
         FormattedNumber numberFormatter;
-        numberToFixedWidthString(number, decimalPlaces, numberFormatter.m_buffer);
-        numberFormatter.m_length = std::strlen(&numberFormatter.m_buffer[0]);
+        numberFormatter.m_length = numberToFixedWidthString(number, decimalPlaces, numberFormatter.m_buffer).size();
         return numberFormatter;
     }
 
@@ -138,8 +134,7 @@ public:
     static FormattedCSSNumber create(double number)
     {
         FormattedCSSNumber numberFormatter;
-        numberToCSSString(number, numberFormatter.m_buffer);
-        numberFormatter.m_length = std::strlen(&numberFormatter.m_buffer[0]);
+        numberFormatter.m_length = numberToCSSString(number, numberFormatter.m_buffer).size();
         return numberFormatter;
     } 
 
@@ -171,5 +166,3 @@ private:
 
 using WTF::FormattedNumber;
 using WTF::FormattedCSSNumber;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
