@@ -7083,8 +7083,6 @@ imported/w3c/web-platform-tests/navigation-api/navigation-methods/return-value/b
 imported/w3c/web-platform-tests/navigation-api/ordering-and-transition/navigate-204-205-download-then-same-document.html [ Failure Pass ]
 
 # -- View Transitions -- #
-# Reftest failures:
-imported/w3c/web-platform-tests/css/css-view-transitions/fractional-translation-from-transform.html [ ImageOnlyFailure ]
 
 # Timeouts
 
@@ -7950,3 +7948,5 @@ webkit.org/b/288957 imported/w3c/web-platform-tests/css/CSS2/tables/table-backgr
 webkit.org/b/288957 imported/w3c/web-platform-tests/css/CSS2/tables/table-backgrounds-bs-colgroup-001.xht [ ImageOnlyFailure ]
 webkit.org/b/288957 imported/w3c/web-platform-tests/css/CSS2/tables/table-backgrounds-bs-column-001.xht [ ImageOnlyFailure ]
 webkit.org/b/288957 imported/w3c/web-platform-tests/css/CSS2/tables/table-cell-001.xht [ ImageOnlyFailure ]
+
+webkit.org/b/293230 imported/w3c/web-platform-tests/css/css-nesting/contextually-invalid-selectors-003.html [ ImageOnlyFailure ]
